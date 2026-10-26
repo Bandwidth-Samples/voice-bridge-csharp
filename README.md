@@ -1,13 +1,12 @@
-# Voice Bridge 
+# Voice Bridge
 
 <a href="https://dev.bandwidth.com/docs/voice/quickStart">
-  <img src="./icon-voice.svg" title="Voice Quick Start Guide" alt="Voice Quick Start Guide"/></p>
+  <img src="./icon-voice.svg" title="Voice Quick Start Guide" alt="Voice Quick Start Guide"/>
 </a>
 
  # Table of Contents
 
 - [Voice Bridge](#voice-bridge)
-- [Table of Contents](#table-of-contents)
 - [Description](#description)
 - [Pre-Requisites](#pre-requisites)
 - [Running the Application](#running-the-application)
