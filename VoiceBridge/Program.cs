@@ -5,94 +5,141 @@ using Bandwidth.Standard.Model.Bxml;
 using Bandwidth.Standard.Model.Bxml.Verbs;
 using Newtonsoft.Json;
 
-var builder = WebApplication.CreateBuilder(args);
-var app = builder.Build();
-
-string BASE_CALLBACK_URL;
-string BW_ACCOUNT_ID;
-string BW_NUMBER;
-string BW_PASSWORD;
-string BW_USERNAME;
-string BW_VOICE_APPLICATION_ID;
-string USER_NUMBER;
-
-
 //Setting up environment variables
-try
-{
-    BASE_CALLBACK_URL = Environment.GetEnvironmentVariable("BASE_CALLBACK_URL");
-    BW_ACCOUNT_ID = Environment.GetEnvironmentVariable("BW_ACCOUNT_ID");
-    BW_NUMBER = Environment.GetEnvironmentVariable("BW_NUMBER");
-    BW_PASSWORD = Environment.GetEnvironmentVariable("BW_PASSWORD");
-    BW_USERNAME = Environment.GetEnvironmentVariable("BW_USERNAME");
-    BW_VOICE_APPLICATION_ID = Environment.GetEnvironmentVariable("BW_VOICE_APPLICATION_ID");
-    USER_NUMBER = Environment.GetEnvironmentVariable("USER_NUMBER");
-}
-catch (Exception)
+string? BW_ACCOUNT_ID = Environment.GetEnvironmentVariable("BW_ACCOUNT_ID");
+string? BW_CLIENT_ID = Environment.GetEnvironmentVariable("BW_CLIENT_ID");
+string? BW_CLIENT_SECRET = Environment.GetEnvironmentVariable("BW_CLIENT_SECRET");
+string? BW_VOICE_APPLICATION_ID = Environment.GetEnvironmentVariable("BW_VOICE_APPLICATION_ID");
+string? BW_NUMBER = Environment.GetEnvironmentVariable("BW_NUMBER");
+string? USER_NUMBER = Environment.GetEnvironmentVariable("USER_NUMBER");
+string? BASE_CALLBACK_URL = Environment.GetEnvironmentVariable("BASE_CALLBACK_URL");
+string? LOCAL_PORT = Environment.GetEnvironmentVariable("LOCAL_PORT");
+
+if (BW_ACCOUNT_ID == null || BW_CLIENT_ID == null || BW_CLIENT_SECRET == null || BW_VOICE_APPLICATION_ID == null
+    || BW_NUMBER == null || USER_NUMBER == null || BASE_CALLBACK_URL == null || !int.TryParse(LOCAL_PORT, out int port))
 {
     Console.WriteLine("Please set the environmental variables defined in the README");
-    throw;
+    Environment.Exit(1);
+    return;
 }
 
+var builder = WebApplication.CreateBuilder(args);
+builder.WebHost.UseUrls($"http://localhost:{port}");
+var app = builder.Build();
+
 Configuration configuration = new Configuration();
-configuration.Username = BW_USERNAME;
-configuration.Password = BW_PASSWORD;
+configuration.OAuthClientId = BW_CLIENT_ID;
+configuration.OAuthClientSecret = BW_CLIENT_SECRET;
 
-app.MapPost("/callbacks/inboundCall", async (HttpContext context) =>
+async Task<Dictionary<string, object>?> ReadBody(HttpContext context)
 {
-    var requestBody = new Dictionary<string, string>();
-    using(var streamReader = new StreamReader(context.Request.Body))
+    try
     {
-        var body = await streamReader.ReadToEndAsync();
-        requestBody = JsonConvert.DeserializeObject<Dictionary<string,string>>(body);
+        using var streamReader = new StreamReader(context.Request.Body);
+        return JsonConvert.DeserializeObject<Dictionary<string, object>>(await streamReader.ReadToEndAsync());
     }
+    catch (JsonException)
+    {
+        return null;
+    }
+}
 
-    var callId = requestBody["callId"];
+app.MapPost("/callbacks/inbound/voice", async (HttpContext context) =>
+{
+    var requestBody = await ReadBody(context);
+    if (requestBody == null || requestBody.GetValueOrDefault("eventType")?.ToString() != "initiate")
+    {
+        return Results.BadRequest();
+    }
 
     CreateCall createCall = new CreateCall(
         to: USER_NUMBER,
         from: BW_NUMBER,
-        answerUrl: BASE_CALLBACK_URL + "/callbacks/outboundCall",
-        answerMethod: CallbackMethodEnum.POST,
         applicationId: BW_VOICE_APPLICATION_ID,
-        tag: callId
+        answerUrl: BASE_CALLBACK_URL + "/callbacks/outbound/voice",
+        tag: requestBody.GetValueOrDefault("callId")?.ToString()
     );
 
-    Console.WriteLine(createCall);
-    CallsApi apiInstance = new CallsApi(configuration);
-    apiInstance.CreateCall(BW_ACCOUNT_ID, createCall);
+    var response = new Response();
 
-    SpeakSentence speakSentence = new SpeakSentence()
+    try
     {
-        Text = "hold while we connect you."
-    };
-    Ring ring = new Ring()
-    {
-        Duration = 30
-    };
-    Response response = new Response(new IVerb[] {speakSentence, ring});
-    return response.ToBXML();
-});
+        CallsApi apiInstance = new CallsApi(configuration);
+        await apiInstance.CreateCallAsync(BW_ACCOUNT_ID, createCall);
 
-app.MapPost("/callbacks/outboundCall", async (HttpContext context) =>
-{
-    var requestBody = new Dictionary<string, string>();
-    using(var streamReader = new StreamReader(context.Request.Body))
+        response.Add
+        (
+            new SpeakSentence()
+            {
+                Text = "Hold while we connect you."
+            }
+        );
+        response.Add
+        (
+            new Ring()
+            {
+                Duration = 30
+            }
+        );
+    }
+    catch (Exception e)
     {
-        var body = await streamReader.ReadToEndAsync();
-        requestBody = JsonConvert.DeserializeObject<Dictionary<string,string>>(body);
+        Console.WriteLine($"Failed to create call: {e.Message}");
+
+        response.Add
+        (
+            new SpeakSentence()
+            {
+                Text = "An error occurred. Ending call."
+            }
+        );
+        response.Add
+        (
+            new Hangup()
+        );
     }
 
-    var inboundCallId = requestBody["tag"];
+    return Results.Content(response.ToBXML(), "application/xml");
+});
 
-    SpeakSentence speakSentence = new SpeakSentence()
+app.MapPost("/callbacks/outbound/voice", async (HttpContext context) =>
+{
+    var requestBody = await ReadBody(context);
+    if (requestBody == null)
     {
-        Text = "Hold while we connect you. We will begin to bridge you now."
-    };
-    Bridge bridge = new Bridge();
-    bridge.TargetCall = inboundCallId;
-    Response response = new Response(new IVerb[] {speakSentence, bridge});
-    return response.ToBXML();
+        return Results.BadRequest();
+    }
+
+    var response = new Response();
+    requestBody.TryGetValue("eventType", out var eventType);
+
+    switch (eventType?.ToString())
+    {
+        case "answer":
+            response.Add
+            (
+                new SpeakSentence()
+                {
+                    Text = "Hold while we connect you. We will begin to bridge you now."
+                }
+            );
+            response.Add
+            (
+                new Bridge()
+                {
+                    TargetCall = requestBody.GetValueOrDefault("tag")?.ToString()
+                }
+            );
+            break;
+        case "disconnect":
+            Console.WriteLine($"Call {requestBody.GetValueOrDefault("callId")} has disconnected");
+            break;
+        default:
+            Console.WriteLine($"Unexpected event type {eventType} received");
+            break;
+    }
+
+    return Results.Content(response.ToBXML(), "application/xml");
 });
 
 app.Run();

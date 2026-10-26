@@ -1,0 +1,19 @@
+version: 2
+
+updates:
+  - package-ecosystem: nuget
+    directory: /VoiceBridge
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "Bandwidth.Sdk"
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-patch
+    groups:
+      dependencies:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "Bandwidth.Sdk"
