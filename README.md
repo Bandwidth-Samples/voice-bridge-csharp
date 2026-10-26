@@ -6,7 +6,6 @@
 
  # Table of Contents
 
-- [Voice Bridge](#voice-bridge)
 - [Description](#description)
 - [Pre-Requisites](#pre-requisites)
 - [Running the Application](#running-the-application)
